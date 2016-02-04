@@ -3,6 +3,9 @@
 // (although the math for humidity may need to be reviewed again)
 // Gets the temp; pressure and humidity from BME280 over i2c
 
+// used for battery level calculations
+
+const BATMAX = 59577.0; // 65535 * 3.0 / 3.3
 
 //these Registurs are lifted from Adafruit_BME280.h. There they use enum() 
 
@@ -353,6 +356,20 @@ function getLumo(boolValue) {
     }
 }
 
+// reads battery level
+function batteryLevel() {
+  bat_en.write(1);
+
+  local batteryLevel = bat.read() * 1.0; // read and cast to floating point
+  local batteryPercent = batteryLevel / BATMAX;
+  local batteryVoltage = 3.3 * batteryPercent;
+
+  bat_en.write(0);
+
+  return batteryVoltage;
+}
+
+
 function readSensors() {
     local lumo0 = readSensorAdc0();
     local lumo1 = readSensorAdc1();
@@ -361,42 +378,11 @@ function readSensors() {
     // calculateLux(lumo0, lumo1);
     local data = { "sensorId": 1, "timestamp": time(), 
     "temp": readTemperature(), "humidity": readHumidity(), 
-    "lux": calculateLux(lumo0, lumo1)};
+    "lux": calculateLux(lumo0, lumo1), "batteryVoltage": batteryLevel()};
     agent.send("senddata", data);
-}
-
-waterLow <- hardware.pin1;
-waterMed <- hardware.pin2;
-waterHigh <- hardware.pin5;
-
-waterLow.configure(ANALOG_IN);
-waterMed.configure(ANALOG_IN);
-waterHigh.configure(ANALOG_IN);
-
-function poll()   {
-    low <- waterLow.read();
-    med <- waterMed.read();
-    high <- waterHigh.read();
-    // server.log("low val " + low);
-    // server.log("med val " + med);
-    // server.log("high val " + high);
+    server.expectonlinein(3600);
+    imp.onidle(function() { imp.deepsleepfor(3600); });
     
-    if((high < 1000) && (med < 1000) && (low < 1000)) {
-        server.log ("the reservoir is full!");
-    }
-    
-    if((high > 1000) && (med < 1000) && (low < 1000)) {
-        server.log ("the reservoir is half full")
-    }
-    
-    if((high > 1000) && (med > 1000) && (low < 1000)) {
-        server.log ("the reservoir is low!")
-    }
-    
-    if((high > 1000) && (med > 1000) && (low > 1000)) {
-        server.log ("the reservoir is empty!")
-    }
-
 
 }
 
@@ -429,16 +415,16 @@ i2c_lux.write(i2c_luxAddr, TSL2561_REGISTER_TIMING);
 // bits 1,0 to the integration timing: 0,0 or 1,0 (timing 13.7ms or 101ms)
 i2c_lux.write(i2c_luxAddr, TSL2561_GAIN_LOW_INT_10);
 
+// config pins for battery level
+bat <- hardware.pin5;
+bat_en <- hardware.pin7;
+
+bat.configure(ANALOG_IN);
+bat_en.configure(DIGITAL_OUT);
+bat_en.write(0);
 
 begin();
 
 readSensors();
-// readTemperature();
-// readHumidity();
-// // readPressure();
-// getLumo(true);
-// poll();
 
-imp.onidle(function(){ server.sleepfor(3600); });
-
-
+imp.onidle(readSensors);
